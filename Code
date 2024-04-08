@@ -1,0 +1,153 @@
+# Import necessary modules
+from tkinter import Tk, filedialog, messagebox, simpledialog, Button, Label, Frame
+from cryptography.fernet import Fernet
+from stegano import lsb
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from cryptography.exceptions import InvalidKey
+import base64
+import os
+
+# Custom dialog for Encode or Decode
+class EncodeDecodeDialog(Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Choose an option")
+        self.geometry("200x150")
+        frame = Frame(self)
+        frame.pack()
+        self.button_encode = Button(frame, text="Encode", command=self.encode)
+        self.button_encode.pack(side="top")
+        self.button_decode = Button(frame, text="Decode", command=self.decode)
+        self.button_decode.pack(side="top")
+        self.button_cancel = Button(frame, text="Cancel", command=self.cancel)
+        self.button_cancel.pack(side="top")
+        self.result = None
+        self.mainloop()
+
+    def encode(self):
+        self.result = "Encode"
+        self.quit()
+
+    def decode(self):
+        self.result = "Decode"
+        self.quit()
+
+    def cancel(self):
+        self.result = "Cancel"
+        self.quit()
+
+# Function to generate a key
+def generate_key(password):
+    # Generate a random salt
+    salt = os.urandom(16)
+    # Create a key derivation function
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100000,
+    )
+    # Derive a key from the password
+    key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
+    # Save the salt and the key to a file
+    with open("secret.key", "wb") as key_file:
+        key_file.write(salt + key)
+
+# Function to get the key
+def get_key(password):
+    # Read the salt and the key from the file
+    with open("secret.key", "rb") as key_file:
+        salt_key = key_file.read()
+    # Separate the salt and the key
+    salt = salt_key[:16]
+    key = salt_key[16:]
+    # Create a key derivation function
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=salt,
+        iterations=100000,
+    )
+    # Verify the password and return the key
+    try:
+        kdf.verify(password.encode(), base64.urlsafe_b64decode(key))
+        return key
+    except InvalidKey:
+        print("Invalid password")
+        return None
+
+# Function to encrypt a message
+def encrypt_message(message, key):
+    # Create a Fernet object
+    f = Fernet(key)
+    # Encrypt the message
+    encrypted_message = f.encrypt(message.encode())
+    return encrypted_message
+
+# Function to encode a message into an image
+def encode(dialog):
+    # Ask the user for the password
+    password = simpledialog.askstring("Password", "Enter the password:", parent=dialog)
+    # Generate the key
+    generate_key(password)
+    # Ask the user for the path of the image
+    image_path = filedialog.askopenfilename(parent=dialog)
+    # Ask the user for the secret message
+    secret_message = simpledialog.askstring("Input", "Enter the secret message to hide in the image:", parent=dialog)
+    # Get the key
+    key = get_key(password)
+    if key is not None:
+        # Encrypt the message
+        encrypted_message = encrypt_message(secret_message, key)
+        # Create the hidden message
+        hidden_message = key.decode() + ' ' + encrypted_message.decode()
+        # Ask the user for the path of the output image
+        output_image_path = filedialog.asksaveasfilename(parent=dialog)
+        # Hide the message in the image
+        secret_image = lsb.hide(image_path, hidden_message)
+        # Save the image
+        secret_image.save(output_image_path)
+        # Show a success message
+        messagebox.showinfo("Success", f"Message encoded and saved to {output_image_path}", parent=dialog)
+
+# Function to decrypt a message
+def decrypt_message(encrypted_message, key):
+    # Create a Fernet object
+    f = Fernet(key)
+    # Decrypt the message
+    decrypted_message = f.decrypt(encrypted_message.encode())
+    return decrypted_message.decode()
+
+# Function to decode a message from an image
+def decode(dialog):
+    # Ask the user for the password
+    password = simpledialog.askstring("Password", "Enter the password:", parent=dialog)
+    # Ask the user for the path of the image
+    image_path = filedialog.askopenfilename(parent=dialog)
+    # Reveal the hidden message
+    hidden_message = lsb.reveal(image_path)
+    # Separate the key and the encrypted message
+    key, encrypted_message = hidden_message.split(' ', 1)
+    # Get the key
+    key = get_key(password)
+    if key is not None:
+        # Decrypt the message
+        decrypted_message = decrypt_message(encrypted_message, key)
+        # Show the decoded message
+        messagebox.showinfo("Decoded message", decrypted_message, parent=dialog)
+
+# Main function
+if __name__ == "__main__":
+    # Main loop
+    while True:
+        # Ask the user for the option
+        dialog = EncodeDecodeDialog()
+        option = dialog.result
+        # Check the option
+        if option.lower() == 'encode':
+            encode(dialog)
+        elif option.lower() == 'decode':
+            decode(dialog)
+        else:  # User clicked "Cancel" or closed the dialog
+            break
